@@ -156,4 +156,3 @@ class ParseCutFile(object):
                 continue
 
         return res_disk
-
