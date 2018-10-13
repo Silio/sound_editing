@@ -1,0 +1,7 @@
+version: '3'
+services:
+  python:
+    build: .
+    volumes:
+     - .:/code
+    user: ${CURRENT_UID}

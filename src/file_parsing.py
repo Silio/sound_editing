@@ -1,6 +1,8 @@
 # coding: utf-8
 import re
 
+LINE_TYPES = ["blank", "title", "period"]
+
 
 class Hms(object):
     """
@@ -31,9 +33,11 @@ class Period(object):
     Represents a period to cut and paste
     It contains a Hms begin and Hms end.
     """
-    def __init__(self, begin, end):
+    def __init__(self, begin, end, pitch=0., overlay=0.):
         self.begin = begin
         self.end = end
+        self.pitch_rate = pitch
+        self.overlay = overlay
         if begin.to_ms() >= end.to_ms():
             raise ConsistencyError
 
@@ -43,7 +47,7 @@ class Track(object):
     Represents a track, with title, rank, and list of periods to cut/paste
     """
     def __init__(self, rank, title, periods=None):
-        self.rank = int(rank)
+        self.rank = rank
         self.title = title.lstrip()
         self.periods = periods if periods else []
 
@@ -81,6 +85,46 @@ class Disk(object):
         return self
 
 
+class Line(object):
+    """
+    Store the information of a line
+    """
+    def __init__(self, line_type):
+        if line_type not in LINE_TYPES:
+            raise ValueError
+        self.line_type = line_type
+
+
+class BlankLine(Line):
+    """
+    Store the information of a blank line
+    """
+    def __init__(self):
+        Line.__init__(self, "blank")
+
+
+class TitleLine(Line):
+    """
+    Store the information of a title line
+    """
+    def __init__(self, rank, text):
+        Line.__init__(self, "title")
+        self.rank = int(rank)
+        self.text = text
+
+
+class PeriodLine(Line):
+    """
+    Store the information of a period line
+    """
+    def __init__(self, begin, end, pitch=0., overlay=0.):
+        Line.__init__(self, "period")
+        self.begin = begin
+        self.end = end
+        self.pitch = pitch
+        self.overlay = overlay
+
+
 class ParseCutFile(object):
     """
     A tool that parses a file that contains an audio file cutting.
@@ -97,20 +141,25 @@ class ParseCutFile(object):
         end time, if period time
         """
         if line.isspace():
-            return "blank", None, None
+            return BlankLine()
 
         title = re.match(r"^([0-9]+)-(.+)$", line)
         if title:
             title_rank = title.group(1)
             title_text = title.group(2)
-            return "title", title_rank, title_text
+            return TitleLine(title_rank, title_text)
 
-        period_regex = r"^([0-9]{2})\D+([0-9]{2})\D+([0-9]{2}\.[0-9]+)\D+->"
-        period_regex += "\D+([0-9]{2})\D+([0-9]{2})\D+([0-9]{2}\.[0-9]+).*$"
+        period_regex = "^([0-9]{2})\D+([0-9]{2})\D+([0-9]{2}\.[0-9]+)\D+->"
+        period_regex += "\D+([0-9]{2})\D+([0-9]{2})\D+([0-9]{2}\.[0-9]+)\D? "
+        period_regex += "?((\+|-)[0-9]+\.?([0-9]*)?)?.*$"
         period = re.match(period_regex, line)
+
         if period:
-            return (
-                "period",
+            overlay = 0.
+            if "chevaucher" in line:
+                overlay = float(line.split("chevaucher=")[1][0])
+
+            return PeriodLine(
                 Hms(
                     period.group(1),
                     period.group(2),
@@ -120,10 +169,13 @@ class ParseCutFile(object):
                     period.group(4),
                     period.group(5),
                     period.group(6),
-                )
+                ),
+                pitch=float(period.group(7)) if period.group(7) else 0.,
+                overlay=overlay,
             )
 
-        return "blank", None, None
+        # if one get there, one consider a blank line
+        return BlankLine()
 
     def parse_file(self, disk_name):
         """
@@ -138,20 +190,25 @@ class ParseCutFile(object):
 
         line = file_stream.readline()
         while line != '':
-            line_type, output1, output2 = self.parse_line(line)
+            the_line = self.parse_line(line)
 
-            if line_type == "blank":
+            if the_line.line_type == "blank":
                 line = file_stream.readline()
                 continue
 
-            if line_type == "title":
-                current_track = Track(output1, output2)
+            if the_line.line_type == "title":
+                current_track = Track(the_line.rank, the_line.text)
                 res_disk += current_track
                 line = file_stream.readline()
                 continue
 
-            if line_type == "period":
-                current_track += Period(output1, output2)
+            if the_line.line_type == "period":
+                current_track += Period(
+                    the_line.begin,
+                    the_line.end,
+                    the_line.pitch,
+                    the_line.overlay,
+                )
                 line = file_stream.readline()
                 continue
 
